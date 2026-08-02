@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Validate shell syntax
+        run: bash -n oci_capacity_retry.sh bootstrap_oci_network.sh
+
+      - name: Compile Python
+        run: python -m py_compile oracle_free_tier_checker.py
+
+      - name: Run shell dry-run
+        env:
+          ENV_FILE: .env.example
+          DRY_RUN: "1"
+        run: ./oci_capacity_retry.sh
+
+      - name: Run Python dry-run
+        run: python oracle_free_tier_checker.py --env-file .env.example --dry-run

@@ -125,6 +125,20 @@ rg -n -i 'BEGIN .*PRIVATE KEY|ocid1\.|ddns|api_key|password|token|secret|ssh -p'
 
 Never push .env. If the repository is ever made public, run a fresh security review and rotate credentials if necessary before publishing it.
 
+## Repository maintenance
+
+The repository includes a small set of maintenance controls:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) explains the review and validation workflow.
+- [SECURITY.md](SECURITY.md) explains how to report a suspected vulnerability privately.
+- [.github/CODEOWNERS](.github/CODEOWNERS) assigns review ownership to the repository owner.
+- [.github/dependabot.yml](.github/dependabot.yml) checks GitHub Actions references for updates.
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) validates shell syntax, Python syntax, and safe dry-run behavior on pushes and pull requests.
+
+The CI workflow never receives OCI credentials and never creates cloud resources. It runs only against the safe `.env.example` configuration.
+
+Before making this repository public, review the security policy, remove any account-specific examples, confirm that the history contains no secrets, and choose an appropriate open-source license if the project will be shared under one.
+
 ## Limitations
 
 OCI does not guarantee a time window for OUT_OF_HOST_CAPACITY. Retrying increases the chance of catching a short availability window, but it does not create capacity and is not a queue or reservation mechanism.
