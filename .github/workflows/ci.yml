@@ -33,4 +33,7 @@ jobs:
         run: ./oci_capacity_retry.sh
 
       - name: Run Python dry-run
+        env:
+          # The dry-run only renders commands; it never invokes OCI CLI.
+          OCI_BIN: oci
         run: python oracle_free_tier_checker.py --env-file .env.example --dry-run
