@@ -1,0 +1,17 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.oci/
+*.pem
+*.key
+*.pub
+id_rsa*
+*api_key*
+
+# Runtime output and local tooling
+*.log
+log*.txt
+__pycache__/
+*.py[cod]
+.DS_Store
