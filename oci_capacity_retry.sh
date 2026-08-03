@@ -56,6 +56,12 @@ SUBNET_ID="${SUBNET_ID:-}"
 IMAGE_ID="${IMAGE_ID:-}"
 DRY_RUN="${DRY_RUN:-0}"
 OCI_BIN="${OCI_BIN:-}"
+LOG_TO_FILE="${LOG_TO_FILE:-1}"
+LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
+LOG_PREFIX="${LOG_PREFIX:-oci-capacity-retry}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-3}"
+LOG_DAY=""
+LOG_FILE=""
 IFS=',' read -r -a ADS <<< "$ADS"
 IFS=',' read -r -a RECHECK_DELAYS <<< "$NETWORK_RECHECK_DELAYS"
 
@@ -63,6 +69,48 @@ if (( ${#ADS[@]} == 0 )); then
   echo "ERROR: ADS is empty in .env."
   exit 1
 fi
+
+if [[ "$LOG_TO_FILE" != "0" && "$LOG_TO_FILE" != "1" ]]; then
+  echo "ERROR: LOG_TO_FILE must be 0 or 1."
+  exit 1
+fi
+if ! [[ "$LOG_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: LOG_RETENTION_DAYS must be a positive integer."
+  exit 1
+fi
+if ! [[ "$LOG_PREFIX" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "ERROR: LOG_PREFIX may contain only letters, numbers, dots, underscores, and hyphens."
+  exit 1
+fi
+
+prune_old_logs() {
+  local candidate
+  for candidate in "$LOG_DIR"/"${LOG_PREFIX}"-????-??-??.log; do
+    [[ -f "$candidate" ]] || continue
+    find "$candidate" -mtime "+$LOG_RETENTION_DAYS" -delete 2>/dev/null || true
+  done
+}
+
+rotate_log_if_needed() {
+  local today
+  [[ "$LOG_TO_FILE" == "1" ]] || return 0
+
+  today="$(date '+%Y-%m-%d')"
+  if [[ -z "$LOG_DAY" || "$today" != "$LOG_DAY" ]]; then
+    mkdir -p "$LOG_DIR" || {
+      echo "ERROR: Could not create log directory: $LOG_DIR"
+      exit 1
+    }
+    LOG_DAY="$today"
+    LOG_FILE="$LOG_DIR/${LOG_PREFIX}-${LOG_DAY}.log"
+    exec >> "$LOG_FILE" 2>&1
+    echo "Logging to $LOG_FILE; retaining logs for $LOG_RETENTION_DAYS day(s)."
+  fi
+
+  prune_old_logs
+}
+
+rotate_log_if_needed
 
 if [[ -f "$LOCK_FILE" ]]; then
   OLD_PID=$(cat "$LOCK_FILE")
@@ -286,6 +334,8 @@ attempt=0
 RETRY_DELAY_SECONDS="$SLEEP_SECONDS"
 
 while true; do
+  rotate_log_if_needed
+
   if ! CURRENT_TOTALS="$(check_totals)"; then
     echo "[$(date '+%H:%M:%S')] ERROR: Cannot check existing A1.Flex instances; stopping to avoid a duplicate."
     notify "Oracle Cloud - ERROR" "The existing-instance check failed. The script was stopped."

@@ -22,4 +22,5 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+logs/
 .DS_Store

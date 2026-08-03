@@ -65,6 +65,9 @@ Important variables:
 | SLEEP_SECONDS | Initial delay between retry cycles |
 | MAX_RETRY_DELAY_SECONDS | Maximum exponential backoff delay |
 | CAPACITY_REQUEST_DELAY_SECONDS | Delay between capacity-report calls |
+| LOG_TO_FILE / LOG_DIR | Enable daily log files and optionally choose their directory |
+| LOG_PREFIX | Prefix for daily log filenames |
+| LOG_RETENTION_DAYS | Delete daily log files older than this many days; `3` keeps the current day plus recent history |
 | SSH_SOURCE_CIDR | TCP/22 source for the network helper; restrict it to your /32 when possible |
 
 For the current Always Free A1 target, the total limit is 2 OCPU and 12 GB of memory. These values are configuration values, not hardcoded behavior.
@@ -90,6 +93,8 @@ Capacity retry and launch:
 ~~~
 
 The script uses a lock file to prevent parallel launch processes. Keep runtime logs in a private directory outside the Git repository.
+
+When `LOG_TO_FILE=1`, the script writes one log file per calendar day and checks for a new day at the start of every retry cycle. With `LOG_RETENTION_DAYS=3`, files older than three days are removed automatically. The active log and the most recent history remain available in `LOG_DIR`.
 
 ## Network
 
