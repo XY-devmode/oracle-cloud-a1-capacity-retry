@@ -62,8 +62,14 @@ LOG_PREFIX="${LOG_PREFIX:-oci-capacity-retry}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-3}"
 LOG_DAY=""
 LOG_FILE=""
+NTP_CHECK_ENABLED="${NTP_CHECK_ENABLED:-1}"
+NTP_SERVERS="${NTP_SERVERS:-time.apple.com,pool.ntp.org}"
+NTP_MAX_OFFSET_SECONDS="${NTP_MAX_OFFSET_SECONDS:-120}"
+NTP_TIMEOUT_SECONDS="${NTP_TIMEOUT_SECONDS:-5}"
+SNTP_BIN="${SNTP_BIN:-}"
 IFS=',' read -r -a ADS <<< "$ADS"
 IFS=',' read -r -a RECHECK_DELAYS <<< "$NETWORK_RECHECK_DELAYS"
+IFS=',' read -r -a NTP_SERVER_LIST <<< "$NTP_SERVERS"
 
 if (( ${#ADS[@]} == 0 )); then
   echo "ERROR: ADS is empty in .env."
@@ -81,6 +87,30 @@ fi
 if ! [[ "$LOG_PREFIX" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "ERROR: LOG_PREFIX may contain only letters, numbers, dots, underscores, and hyphens."
   exit 1
+fi
+if [[ "$NTP_CHECK_ENABLED" != "0" && "$NTP_CHECK_ENABLED" != "1" ]]; then
+  echo "ERROR: NTP_CHECK_ENABLED must be 0 or 1."
+  exit 1
+fi
+if ! [[ "$NTP_MAX_OFFSET_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: NTP_MAX_OFFSET_SECONDS must be a positive integer."
+  exit 1
+fi
+if ! [[ "$NTP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: NTP_TIMEOUT_SECONDS must be a positive integer."
+  exit 1
+fi
+if [[ "$NTP_CHECK_ENABLED" == "1" ]]; then
+  if [[ -z "$NTP_SERVERS" ]]; then
+    echo "ERROR: NTP_SERVERS cannot be empty when NTP_CHECK_ENABLED=1."
+    exit 1
+  fi
+  for ntp_server in "${NTP_SERVER_LIST[@]}"; do
+    if [[ ! "$ntp_server" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]]; then
+      echo "ERROR: Invalid NTP server name: $ntp_server"
+      exit 1
+    fi
+  done
 fi
 
 prune_old_logs() {
@@ -218,6 +248,51 @@ is_network_error() {
   grep -Eqi 'timed out|timeout|connection|ConnectionError|RequestException|read timeout|Max retries exceeded|ConnectTimeout' <<< "$1"
 }
 
+# OCI request signatures use the local system clock. Query public NTP servers
+# as a safety check, but do not substitute their time into OCI requests.
+check_ntp_clock() {
+  local sntp_bin="$SNTP_BIN"
+  local ntp_server ntp_output offset absolute_offset
+
+  [[ "$NTP_CHECK_ENABLED" == "1" ]] || return 0
+
+  if [[ -z "$sntp_bin" ]]; then
+    sntp_bin="$(command -v sntp 2>/dev/null || true)"
+  fi
+  if [[ -z "$sntp_bin" ]]; then
+    echo "WARNING: sntp was not found; the system clock could not be checked against public NTP."
+    return 0
+  fi
+
+  for ntp_server in "${NTP_SERVER_LIST[@]}"; do
+    if ntp_output=$("$sntp_bin" -t "$NTP_TIMEOUT_SECONDS" "$ntp_server" 2>&1); then
+      offset="$(printf '%s\n' "$ntp_output" | awk '$1 ~ /^[+-]?[0-9]+([.][0-9]+)?$/ { print $1; exit }')"
+      if [[ -z "$offset" ]]; then
+        echo "WARNING: NTP server $ntp_server returned an unreadable offset."
+        continue
+      fi
+
+      absolute_offset="$(awk -v value="$offset" 'BEGIN { if (value < 0) value = -value; print value }')"
+      if awk -v offset="$absolute_offset" -v maximum="$NTP_MAX_OFFSET_SECONDS" 'BEGIN { exit !(offset <= maximum) }'; then
+        echo "NTP check passed: $ntp_server; measured offset ${offset}s."
+        return 0
+      fi
+
+      echo "ERROR: System clock offset is ${offset}s according to $ntp_server; maximum allowed is ${NTP_MAX_OFFSET_SECONDS}s."
+      echo "Enable automatic network time on the Mac before continuing."
+      return 1
+    fi
+
+    echo "WARNING: NTP server $ntp_server could not be reached: $(printf '%s\n' "$ntp_output" | head -1)"
+  done
+
+  echo "WARNING: No configured NTP server responded; continuing with the current system clock."
+  return 0
+}
+
+if ! check_ntp_clock; then
+  exit 1
+fi
 validate_oci_access
 
 get_resource_id() {
@@ -335,6 +410,12 @@ RETRY_DELAY_SECONDS="$SLEEP_SECONDS"
 
 while true; do
   rotate_log_if_needed
+
+  if ! check_ntp_clock; then
+    echo "[$(date '+%H:%M:%S')] ERROR: The system clock is outside the safe OCI signing range; stopping."
+    notify "Oracle Cloud - ERROR" "The system clock is not synchronized."
+    exit 1
+  fi
 
   if ! CURRENT_TOTALS="$(check_totals)"; then
     echo "[$(date '+%H:%M:%S')] ERROR: Cannot check existing A1.Flex instances; stopping to avoid a duplicate."

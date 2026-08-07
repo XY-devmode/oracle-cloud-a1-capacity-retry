@@ -14,6 +14,7 @@ It is intended for an Always Free workload, but it does not assume a specific Or
 - Launches an instance only when capacity is reported as available.
 - Waits for the instance to reach RUNNING.
 - Rechecks total OCPU and memory usage and stops when the target is reached.
+- Checks the local system clock against a primary and fallback public NTP server before OCI calls.
 - Stops on authentication or configuration errors instead of retrying forever.
 - Never stores the private API key in the project.
 
@@ -68,6 +69,10 @@ Important variables:
 | LOG_TO_FILE / LOG_DIR | Enable daily log files and optionally choose their directory |
 | LOG_PREFIX | Prefix for daily log filenames |
 | LOG_RETENTION_DAYS | Delete daily log files older than this many days; `3` keeps the current day plus recent history |
+| NTP_CHECK_ENABLED | Check the system clock against public NTP before OCI calls |
+| NTP_SERVERS | Comma-separated primary/fallback NTP hosts, for example `time.apple.com,pool.ntp.org` |
+| NTP_MAX_OFFSET_SECONDS | Maximum accepted measured clock offset; `120` leaves margin below OCI's five-minute limit |
+| NTP_TIMEOUT_SECONDS | Timeout for each NTP query |
 | SSH_SOURCE_CIDR | TCP/22 source for the network helper; restrict it to your /32 when possible |
 
 For the current Always Free A1 target, the total limit is 2 OCPU and 12 GB of memory. These values are configuration values, not hardcoded behavior.
@@ -95,6 +100,20 @@ Capacity retry and launch:
 The script uses a lock file to prevent parallel launch processes. Keep runtime logs in a private directory outside the Git repository.
 
 When `LOG_TO_FILE=1`, the script writes one log file per calendar day and checks for a new day at the start of every retry cycle. With `LOG_RETENTION_DAYS=3`, files older than three days are removed automatically. The active log and the most recent history remain available in `LOG_DIR`.
+
+### Clock synchronization
+
+OCI API requests are signed with the computer's local clock. The script uses `sntp` to compare that clock with the first reachable host in `NTP_SERVERS`; the second host is a fallback if the first is unavailable. The NTP check only detects a problem and prevents an unsafe OCI call. It does not replace the operating system clock or insert an NTP timestamp into the OCI request.
+
+On macOS, enable automatic network time once with an administrator account:
+
+~~~bash
+sudo systemsetup -setnetworktimeserver time.apple.com
+sudo systemsetup -setusingnetworktime on
+sudo sntp -sS time.apple.com
+~~~
+
+The first two commands configure the Mac's system time source; the last command can correct the clock immediately. macOS supports one configured network time server, so `NTP_SERVERS` is the script's verification/fallback list, not a second system clock configuration. If the remote user cannot run `sudo`, an administrator must perform these commands or use System Settings → General → Date & Time → Set time and date automatically.
 
 ## Network
 
