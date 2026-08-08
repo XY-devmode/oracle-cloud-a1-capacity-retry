@@ -66,6 +66,7 @@ NTP_CHECK_ENABLED="${NTP_CHECK_ENABLED:-1}"
 NTP_SERVERS="${NTP_SERVERS:-time.apple.com,pool.ntp.org}"
 NTP_MAX_OFFSET_SECONDS="${NTP_MAX_OFFSET_SECONDS:-120}"
 NTP_TIMEOUT_SECONDS="${NTP_TIMEOUT_SECONDS:-5}"
+NTP_RETRY_DELAY_SECONDS="${NTP_RETRY_DELAY_SECONDS:-30}"
 SNTP_BIN="${SNTP_BIN:-}"
 IFS=',' read -r -a ADS <<< "$ADS"
 IFS=',' read -r -a RECHECK_DELAYS <<< "$NETWORK_RECHECK_DELAYS"
@@ -98,6 +99,10 @@ if ! [[ "$NTP_MAX_OFFSET_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$NTP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: NTP_TIMEOUT_SECONDS must be a positive integer."
+  exit 1
+fi
+if ! [[ "$NTP_RETRY_DELAY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: NTP_RETRY_DELAY_SECONDS must be a positive integer."
   exit 1
 fi
 if [[ "$NTP_CHECK_ENABLED" == "1" ]]; then
@@ -253,6 +258,7 @@ is_network_error() {
 check_ntp_clock() {
   local sntp_bin="$SNTP_BIN"
   local ntp_server ntp_output offset absolute_offset
+  local unsafe_response=0
 
   [[ "$NTP_CHECK_ENABLED" == "1" ]] || return 0
 
@@ -260,8 +266,8 @@ check_ntp_clock() {
     sntp_bin="$(command -v sntp 2>/dev/null || true)"
   fi
   if [[ -z "$sntp_bin" ]]; then
-    echo "WARNING: sntp was not found; the system clock could not be checked against public NTP."
-    return 0
+    echo "ERROR: sntp was not found; pausing until the system clock can be checked against public NTP."
+    return 1
   fi
 
   for ntp_server in "${NTP_SERVER_LIST[@]}"; do
@@ -278,21 +284,30 @@ check_ntp_clock() {
         return 0
       fi
 
-      echo "ERROR: System clock offset is ${offset}s according to $ntp_server; maximum allowed is ${NTP_MAX_OFFSET_SECONDS}s."
-      echo "Enable automatic network time on the Mac before continuing."
-      return 1
+      unsafe_response=1
+      echo "WARNING: System clock offset is ${offset}s according to $ntp_server; trying the next NTP server."
+      continue
     fi
 
     echo "WARNING: NTP server $ntp_server could not be reached: $(printf '%s\n' "$ntp_output" | head -1)"
   done
 
-  echo "WARNING: No configured NTP server responded; continuing with the current system clock."
-  return 0
+  if (( unsafe_response )); then
+    echo "ERROR: No configured NTP server reported a safe clock offset."
+  else
+    echo "ERROR: No configured NTP server responded with a readable clock offset."
+  fi
+  return 1
 }
 
-if ! check_ntp_clock; then
-  exit 1
-fi
+wait_for_ntp_clock() {
+  while ! check_ntp_clock; do
+    echo "WARNING: NTP is not currently safe; keeping the script alive and retrying in ${NTP_RETRY_DELAY_SECONDS}s."
+    sleep "$NTP_RETRY_DELAY_SECONDS"
+  done
+}
+
+wait_for_ntp_clock
 validate_oci_access
 
 get_resource_id() {
@@ -412,9 +427,9 @@ while true; do
   rotate_log_if_needed
 
   if ! check_ntp_clock; then
-    echo "[$(date '+%H:%M:%S')] ERROR: The system clock is outside the safe OCI signing range; stopping."
-    notify "Oracle Cloud - ERROR" "The system clock is not synchronized."
-    exit 1
+    echo "[$(date '+%H:%M:%S')] WARNING: NTP is not currently safe; pausing OCI calls and retrying in ${NTP_RETRY_DELAY_SECONDS}s."
+    sleep "$NTP_RETRY_DELAY_SECONDS"
+    continue
   fi
 
   if ! CURRENT_TOTALS="$(check_totals)"; then

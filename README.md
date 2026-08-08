@@ -70,9 +70,10 @@ Important variables:
 | LOG_PREFIX | Prefix for daily log filenames |
 | LOG_RETENTION_DAYS | Delete daily log files older than this many days; `3` keeps the current day plus recent history |
 | NTP_CHECK_ENABLED | Check the system clock against public NTP before OCI calls |
-| NTP_SERVERS | Comma-separated primary/fallback NTP hosts, for example `time.apple.com,pool.ntp.org` |
+| NTP_SERVERS | Comma-separated primary/fallback NTP hosts, for example `time.apple.com,pool.ntp.org,time.nist.gov` |
 | NTP_MAX_OFFSET_SECONDS | Maximum accepted measured clock offset; `120` leaves margin below OCI's five-minute limit |
 | NTP_TIMEOUT_SECONDS | Timeout for each NTP query |
+| NTP_RETRY_DELAY_SECONDS | How long to wait before retrying when NTP is unavailable or unsafe |
 | SSH_SOURCE_CIDR | TCP/22 source for the network helper; restrict it to your /32 when possible |
 
 For the current Always Free A1 target, the total limit is 2 OCPU and 12 GB of memory. These values are configuration values, not hardcoded behavior.
@@ -103,7 +104,7 @@ When `LOG_TO_FILE=1`, the script writes one log file per calendar day and checks
 
 ### Clock synchronization
 
-OCI API requests are signed with the computer's local clock. The script uses `sntp` to compare that clock with the first reachable host in `NTP_SERVERS`; the second host is a fallback if the first is unavailable. The NTP check only detects a problem and prevents an unsafe OCI call. It does not replace the operating system clock or insert an NTP timestamp into the OCI request.
+OCI API requests are signed with the computer's local clock. The script uses `sntp` to compare that clock with the configured hosts in `NTP_SERVERS`. If one host reports an unsafe offset, the script tries the remaining hosts. If no host reports a safe offset, the process stays alive, pauses OCI calls, and retries after `NTP_RETRY_DELAY_SECONDS`; it does not exit. The NTP check does not replace the operating system clock or insert an NTP timestamp into the OCI request.
 
 On macOS, enable automatic network time once with an administrator account:
 
