@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -35,5 +35,6 @@ jobs:
       - name: Run Python dry-run
         env:
           # The dry-run only renders commands; it never invokes OCI CLI.
-          OCI_BIN: oci
+          # Use a runner-independent executable so CI does not require OCI CLI.
+          OCI_BIN: /bin/echo
         run: python oracle_free_tier_checker.py --env-file .env.example --dry-run
