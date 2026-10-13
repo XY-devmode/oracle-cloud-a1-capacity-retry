@@ -61,7 +61,7 @@ else:
 
 class RetryJitterTests(unittest.TestCase):
     def run_retry(self, scenarios, jitter="30", cycles=4, ads="AD-1", ntp=False,
-                  dry_run=False, bark=False):
+                  dry_run=False, bark=False, bark_settings=None):
         with tempfile.TemporaryDirectory(prefix="retry-jitter-test-") as directory:
             work = Path(directory)
             cli = work / "mock-oci"
@@ -86,9 +86,11 @@ class RetryJitterTests(unittest.TestCase):
             if jitter is not None:
                 settings["RETRY_JITTER_SECONDS"] = jitter
             if bark:
-                # Invalid scheme exercises a failure without any network request.
+                # The default failure fixture never makes a network request.
                 settings["BARK_KEY"] = "synthetic-device-key"
                 settings["BARK_SERVER_URL"] = "invalid://synthetic-bark-server"
+                if bark_settings:
+                    settings.update(bark_settings)
             # Override the safe template in this temporary fixture only.
             env_file = work / "fixture.env"
             env_file.write_text((ROOT / ".env.example").read_text() + "\n" +

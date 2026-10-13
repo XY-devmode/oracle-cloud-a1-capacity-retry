@@ -80,7 +80,7 @@ Important variables:
 | NTP_RETRY_DELAY_SECONDS | How long to wait before retrying when NTP is unavailable or unsafe |
 | BARK_KEY | Bark device key; empty by default, which disables push notifications |
 | BARK_SERVER_URL | Bark server base URL; defaults to `https://api.day.app`, supports a self-hosted server and reverse-proxy paths |
-| BARK_TIMEOUT_SECONDS | Notification request timeout in seconds; defaults to `5`, accepts integers from `1` to `60` |
+| BARK_TIMEOUT_SECONDS | Total time budget for the notification worker in seconds, including connection and response reading; defaults to `5`, accepts integers from `1` to `60` |
 | BARK_SOUND / BARK_GROUP | Optional notification sound and group; empty values use the server defaults |
 | SSH_SOURCE_CIDR | TCP/22 source for the network helper; restrict it to your /32 when possible |
 
@@ -119,6 +119,8 @@ Install the [Bark iOS app](https://github.com/Finb/Bark) and copy its device key
 Bark receives the existing notification titles and messages for successful launches, target completion, and errors. These messages may include the availability domain and compute usage. Notifications are disabled until a device key is configured, and dry runs never send them. `BARK_SOUND` and `BARK_GROUP` optionally customize their presentation.
 
 The device key is read from the environment and sent in the JSON body, never in command-line arguments or the request URL. Redirects are rejected, and failure messages omit server URLs, response bodies, and exception details. A failed notification is reported as a warning and does not change the retry process or its exit status.
+
+The command-line helper supervises notification sending in a separate process. If the worker exceeds `BARK_TIMEOUT_SECONDS`, it is stopped and a sanitized warning is logged, allowing the retry process to continue even when DNS stalls or a server sends the response slowly. Process startup and cleanup can add a small amount of overhead to the configured budget.
 
 ### Clock synchronization
 

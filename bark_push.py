@@ -5,6 +5,7 @@ from http.client import HTTPException
 import json
 import os
 import re
+import subprocess
 import sys
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
@@ -18,6 +19,13 @@ class NoRedirects(HTTPRedirectHandler):
         return None
 
 
+def notification_timeout(environ):
+    timeout = environ.get("BARK_TIMEOUT_SECONDS") or "5"
+    if not re.fullmatch(r"[1-9][0-9]?", timeout) or int(timeout) > 60:
+        raise ValueError
+    return int(timeout)
+
+
 def send_notification(title, body, environ=None):
     environ = os.environ if environ is None else environ
     key = environ.get("BARK_KEY", "")
@@ -25,8 +33,8 @@ def send_notification(title, body, environ=None):
         return True
 
     server = environ.get("BARK_SERVER_URL") or "https://api.day.app"
-    timeout = environ.get("BARK_TIMEOUT_SECONDS") or "5"
     try:
+        timeout = notification_timeout(environ)
         url = urlsplit(server)
         # Accept reverse-proxy paths, but keep device keys out of the URL.
         if (url.scheme not in ("http", "https") or not url.hostname or
@@ -36,8 +44,6 @@ def send_notification(title, body, environ=None):
             raise ValueError
         # Accessing .port also validates malformed/out-of-range ports.
         url.port
-        if not re.fullmatch(r"[1-9][0-9]?", timeout) or int(timeout) > 60:
-            raise ValueError
     except ValueError:
         print("WARNING: Invalid Bark server URL or timeout; notification skipped.", file=sys.stderr)
         return False
@@ -52,7 +58,7 @@ def send_notification(title, body, environ=None):
                           data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                           headers={"Content-Type": "application/json; charset=utf-8"},
                           method="POST")
-        with build_opener(NoRedirects()).open(request, timeout=int(timeout)) as response:
+        with build_opener(NoRedirects()).open(request, timeout=timeout) as response:
             data = response.read(65537)
         if len(data) > 65536:
             raise ValueError
@@ -72,10 +78,33 @@ def send_notification(title, body, environ=None):
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--worker":
+        return 0 if send_notification(sys.argv[2], sys.argv[3]) else 1
     if len(sys.argv) != 3:
         print("Usage: bark_push.py TITLE BODY", file=sys.stderr)
         return 1
-    return 0 if send_notification(sys.argv[1], sys.argv[2]) else 1
+    if not os.environ.get("BARK_KEY"):
+        return 0
+    try:
+        timeout = notification_timeout(os.environ)
+    except ValueError:
+        print("WARNING: Invalid Bark server URL or timeout; notification skipped.", file=sys.stderr)
+        return 1
+
+    # Supervise the entire request, including DNS and slow response bodies.
+    # Credentials remain in the inherited environment, not the command line.
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "--worker", *sys.argv[1:]],
+            timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        print("WARNING: Bark notification timed out; retry process will continue.", file=sys.stderr)
+        return 1
+    except OSError:
+        print("WARNING: Bark notification helper could not start.", file=sys.stderr)
+        return 1
+    return result.returncode
 
 
 if __name__ == "__main__":
